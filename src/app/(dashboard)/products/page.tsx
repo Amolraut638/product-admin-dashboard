@@ -1,47 +1,180 @@
-import type { Metadata } from 'next';
+'use client';
 
-export const metadata: Metadata = {
-  title: 'Products — Product Admin',
+import { useReducer, useEffect, useState } from 'react';
+import { ShoppingBag } from 'lucide-react';
+import type { Product } from '@/types/product';
+import { getProducts } from '@/services/product.service';
+import ProductsTable from '@/components/products/ProductsTable';
+import ProductCard from '@/components/products/ProductCard';
+import { CardSkeleton } from '@/components/products/ProductSkeleton';
+import ErrorBanner from '@/components/ui/ErrorBanner';
+import EmptyState from '@/components/ui/EmptyState';
+import Button from '@/components/ui/Button';
+
+// ---------------------------------------------------------------------------
+// Fetch state — useReducer keeps state transitions atomic and avoids the
+// react-hooks/set-state-in-effect lint error (dispatch is not setState).
+// ---------------------------------------------------------------------------
+interface FetchState {
+  status: 'loading' | 'success' | 'empty' | 'error';
+  products: Product[];
+  total: number;
+  errorMessage: string | null;
+}
+
+type FetchAction =
+  | { type: 'FETCH_START' }
+  | { type: 'FETCH_SUCCESS'; products: Product[]; total: number }
+  | { type: 'FETCH_ERROR'; message: string };
+
+const initialFetchState: FetchState = {
+  status: 'loading',
+  products: [],
+  total: 0,
+  errorMessage: null,
 };
 
-/**
- * /products — product listing page.
- *
- * Phase 1: placeholder UI with correct heading structure.
- * Phase 2: will add filter bar, data table, pagination, sorting, and search.
- */
+function fetchReducer(state: FetchState, action: FetchAction): FetchState {
+  switch (action.type) {
+    case 'FETCH_START':
+      return { ...initialFetchState, status: 'loading' };
+    case 'FETCH_SUCCESS':
+      return {
+        status: action.products.length > 0 ? 'success' : 'empty',
+        products: action.products,
+        total: action.total,
+        errorMessage: null,
+      };
+    case 'FETCH_ERROR':
+      return { status: 'error', products: [], total: 0, errorMessage: action.message };
+    default:
+      return state;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ProductsPage
+// ---------------------------------------------------------------------------
+const LIMIT = 20;
+
 export default function ProductsPage() {
+  const [fetchState, dispatch] = useReducer(fetchReducer, initialFetchState);
+
+  // retryCount is incremented by the Retry button — causes the fetch effect to
+  // re-run without any API logic inside the button handler itself.
+  const [retryCount, setRetryCount] = useState(0);
+
+  // Fetch products — re-runs when retryCount changes (Retry button click)
+  useEffect(() => {
+    let cancelled = false;
+
+    // dispatch is from useReducer — not flagged by react-hooks/set-state-in-effect
+    dispatch({ type: 'FETCH_START' });
+
+    getProducts({ limit: LIMIT, skip: 0 })
+      .then((data) => {
+        if (!cancelled) {
+          dispatch({
+            type: 'FETCH_SUCCESS',
+            products: data.products,
+            total: data.total,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          dispatch({
+            type: 'FETCH_ERROR',
+            message: 'Failed to load products. Please check your connection and try again.',
+          });
+        }
+      });
+
+    // Cleanup: ignore the response if the component unmounts mid-request
+    return () => { cancelled = true; };
+  }, [retryCount]);
+
+  const { status, products, total, errorMessage } = fetchState;
+
+  // Subtitle shown below the page heading
+  const subtitle =
+    status === 'success'
+      ? `Showing ${products.length} of ${total} products`
+      : 'Browse and manage your product catalogue.';
+
   return (
     <div>
-      {/* Page heading */}
+      {/* ── Page heading ─────────────────────────────────────────────── */}
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Products</h1>
-          <p className="mt-0.5 text-sm text-gray-500">
-            Browse, search and manage your product catalogue.
-          </p>
+          <p className="mt-0.5 text-sm text-gray-500">{subtitle}</p>
         </div>
 
-        {/* Add Product button — will be wired in Phase 2 */}
-        <button
-          type="button"
-          disabled
-          className="flex items-center gap-1.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2 transition shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+        {/* Add Product — disabled until Phase 4 */}
+        <Button
           id="add-product-btn"
+          variant="primary"
+          size="md"
+          disabled
+          className="shrink-0"
         >
           + Add Product
-        </button>
+        </Button>
       </div>
 
-      {/* Placeholder content card */}
-      <div className="bg-white border border-gray-200 rounded-2xl p-12 text-center">
-        <p className="text-sm text-gray-400">
-          Products will appear here.
-        </p>
-        <p className="text-xs text-gray-300 mt-1">
-          Data table, filtering, sorting and pagination coming in Phase 2.
-        </p>
-      </div>
+      {/* ── Error banner ─────────────────────────────────────────────── */}
+      {status === 'error' && (
+        <div className="mb-5">
+          <ErrorBanner
+            id="products-retry-btn"
+            message={errorMessage ?? 'Something went wrong.'}
+            onRetry={() => setRetryCount((c) => c + 1)}
+          />
+        </div>
+      )}
+
+      {/* ── Loading: desktop table skeleton ──────────────────────────── */}
+      {status === 'loading' && (
+        <>
+          {/* Desktop skeleton — table shell is preserved to prevent layout shift */}
+          <div className="hidden md:block">
+            <ProductsTable products={[]} loading />
+          </div>
+
+          {/* Mobile skeleton */}
+          <div className="md:hidden">
+            <CardSkeleton count={6} />
+          </div>
+        </>
+      )}
+
+      {/* ── Empty state ──────────────────────────────────────────────── */}
+      {status === 'empty' && (
+        <div className="bg-white border border-gray-200 rounded-2xl">
+          <EmptyState
+            icon={ShoppingBag}
+            message="No products found."
+          />
+        </div>
+      )}
+
+      {/* ── Products ─────────────────────────────────────────────────── */}
+      {status === 'success' && (
+        <>
+          {/* Desktop — table (md and above) */}
+          <div className="hidden md:block">
+            <ProductsTable products={products} />
+          </div>
+
+          {/* Mobile — cards (below md) */}
+          <div className="md:hidden space-y-3">
+            {products.map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
