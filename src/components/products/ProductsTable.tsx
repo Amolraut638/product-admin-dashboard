@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { Star, ImageOff } from 'lucide-react';
 import type { Product } from '@/types/product';
 import Badge from '@/components/ui/Badge';
-import Card from '@/components/ui/Card';
 import StockBadge from './StockBadge';
 import { TableSkeleton } from './ProductSkeleton';
 import { formatPrice } from '@/lib/utils';
@@ -77,7 +76,7 @@ function ProductRow({ product }: { product: Product }) {
 }
 
 // ---------------------------------------------------------------------------
-// Table header row — reused by both the populated table and the skeleton table
+// TableHead — column headers (shared by populated table and skeleton)
 // ---------------------------------------------------------------------------
 function TableHead() {
   const cols = ['Product', 'Category', 'Price', 'Rating', 'Stock'];
@@ -99,30 +98,33 @@ function TableHead() {
 }
 
 // ---------------------------------------------------------------------------
-// ProductsTable — desktop-only data table (hidden on mobile, shown on md+)
+// ProductsTable — desktop-only table (hidden on mobile, shown at md+).
+//
+// NOTE: this component does NOT include a Card wrapper. The parent
+// (ProductsContent) wraps this together with Pagination inside a single Card
+// so they share one rounded container and border.
 // ---------------------------------------------------------------------------
 interface ProductsTableProps {
   products: Product[];
+  /** Render skeleton rows instead of real data while fetching. */
   loading?: boolean;
 }
 
 export default function ProductsTable({ products, loading = false }: ProductsTableProps) {
   return (
-    <Card padding={false}>
-      <div className="overflow-x-auto rounded-2xl">
-        <table className="min-w-full divide-y divide-gray-100">
-          <TableHead />
-          <tbody className="divide-y divide-gray-100 bg-white">
-            {loading ? (
-              <TableSkeleton rows={8} />
-            ) : (
-              products.map((product) => (
-                <ProductRow key={product.id} product={product} />
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </Card>
+    <div className="overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-100">
+        <TableHead />
+        <tbody className="divide-y divide-gray-100 bg-white">
+          {loading ? (
+            <TableSkeleton rows={8} />
+          ) : (
+            products.map((product) => (
+              <ProductRow key={product.id} product={product} />
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
