@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { Star, ImageOff } from 'lucide-react';
 import type { Product } from '@/types/product';
 import Badge from '@/components/ui/Badge';
@@ -8,7 +9,7 @@ import StockBadge from './StockBadge';
 import { formatPrice } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
-// Card thumbnail — same graceful fallback as the desktop table
+// Card thumbnail — graceful fallback on load error
 // ---------------------------------------------------------------------------
 function CardImage({ src, alt }: { src: string; alt: string }) {
   const [failed, setFailed] = useState(false);
@@ -31,7 +32,7 @@ function CardImage({ src, alt }: { src: string; alt: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// ProductCard — a single product displayed as a mobile card
+// ProductCard — mobile card; the entire card is a Link to the details page.
 // ---------------------------------------------------------------------------
 interface ProductCardProps {
   product: Product;
@@ -39,7 +40,12 @@ interface ProductCardProps {
 
 export default function ProductCard({ product }: ProductCardProps) {
   return (
-    <div className="bg-white border border-gray-200 rounded-2xl p-4 flex gap-3">
+    <Link
+      href={`/products/${product.id}`}
+      id={`product-card-${product.id}`}
+      className="block bg-white border border-gray-200 rounded-2xl p-4 flex gap-3
+                 hover:border-indigo-300 hover:shadow-sm transition-all"
+    >
       <CardImage src={product.thumbnail} alt={product.title} />
 
       <div className="flex-1 min-w-0">
@@ -71,6 +77,6 @@ export default function ProductCard({ product }: ProductCardProps) {
           <StockBadge stock={product.stock} />
         </div>
       </div>
-    </div>
+    </Link>
   );
 }

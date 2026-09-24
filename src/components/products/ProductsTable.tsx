@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { Star, ImageOff } from 'lucide-react';
 import type { Product } from '@/types/product';
 import Badge from '@/components/ui/Badge';
@@ -32,18 +33,24 @@ function ProductImage({ src, alt }: { src: string; alt: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// ProductRow — single table row
+// ProductRow — single table row; title is a Link to the details page.
+// The whole row has a group-hover so the bg shifts when hovered.
 // ---------------------------------------------------------------------------
 function ProductRow({ product }: { product: Product }) {
   return (
-    <tr className="hover:bg-gray-50 transition-colors">
-      {/* Product: thumbnail + title */}
+    <tr className="hover:bg-gray-50 transition-colors group">
+      {/* Product: thumbnail + clickable title */}
       <td className="px-4 py-3">
         <div className="flex items-center gap-3">
           <ProductImage src={product.thumbnail} alt={product.title} />
-          <span className="text-sm font-medium text-gray-900 max-w-[220px] truncate">
+          <Link
+            href={`/products/${product.id}`}
+            id={`product-row-${product.id}`}
+            className="text-sm font-medium text-gray-900 hover:text-indigo-600 transition-colors
+                       max-w-[220px] truncate block"
+          >
             {product.title}
-          </span>
+          </Link>
         </div>
       </td>
 
@@ -76,7 +83,7 @@ function ProductRow({ product }: { product: Product }) {
 }
 
 // ---------------------------------------------------------------------------
-// TableHead — column headers (shared by populated table and skeleton)
+// TableHead
 // ---------------------------------------------------------------------------
 function TableHead() {
   const cols = ['Product', 'Category', 'Price', 'Rating', 'Stock'];
@@ -99,14 +106,10 @@ function TableHead() {
 
 // ---------------------------------------------------------------------------
 // ProductsTable — desktop-only table (hidden on mobile, shown at md+).
-//
-// NOTE: this component does NOT include a Card wrapper. The parent
-// (ProductsContent) wraps this together with Pagination inside a single Card
-// so they share one rounded container and border.
+// Does NOT include a Card wrapper — parent wraps it together with Pagination.
 // ---------------------------------------------------------------------------
 interface ProductsTableProps {
   products: Product[];
-  /** Render skeleton rows instead of real data while fetching. */
   loading?: boolean;
 }
 

@@ -40,8 +40,8 @@ export async function getCategoryProducts(
 }
 
 // GET /products/:id
-export async function getProductById(id: number): Promise<Product> {
-  const response = await apiClient.get<Product>(`/products/${id}`);
+export async function getProductById(id: number, signal?: AbortSignal): Promise<Product> {
+  const response = await apiClient.get<Product>(`/products/${id}`, { signal });
   return response.data;
 }
 
