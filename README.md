@@ -41,7 +41,7 @@ A responsive product administration dashboard built with **Next.js**, **React**,
 ## Setup
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/Amolraut638/product-admin-dashboard
 cd product-admin-dashboard
 npm install
 npm run dev
