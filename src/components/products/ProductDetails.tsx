@@ -2,7 +2,7 @@
 
 import { useReducer, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Star, Package, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Star, Package, RefreshCw, Pencil } from 'lucide-react';
 import { isCancel, isAxiosError } from 'axios';
 import type { Product } from '@/types/product';
 import { getProductById } from '@/services/product.service';
@@ -10,7 +10,7 @@ import ProductImageGallery from './ProductImageGallery';
 import ProductReviews from './ProductReviews';
 import Badge from '@/components/ui/Badge';
 import StockBadge from './StockBadge';
-import { formatPrice } from '@/lib/utils';
+import { formatPrice, parseProductId } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
 // Fetch state — useReducer for atomic transitions (lint-safe in effects).
@@ -42,16 +42,7 @@ function detailReducer(state: DetailState, action: DetailAction): DetailState {
   }
 }
 
-// ---------------------------------------------------------------------------
-// ID validation
-// ---------------------------------------------------------------------------
-function parseProductId(raw: string): number | null {
-  const n = parseInt(raw, 10);
-  // Must be a positive integer AND the string must be exactly that integer
-  // (guards against 'abc', '-1', '1.5', '00', etc.)
-  if (isNaN(n) || n <= 0 || String(n) !== raw) return null;
-  return n;
-}
+// parseProductId is imported from @/lib/utils (shared with edit page)
 
 // ---------------------------------------------------------------------------
 // ProductInfo — the right column: title, price, badges, description, metadata
@@ -205,17 +196,33 @@ export default function ProductDetails({ id }: ProductDetailsProps) {
 
   return (
     <div>
-      {/* Back link — always visible except during loading to avoid layout jump */}
+      {/* Top nav — back link + edit button */}
       {status !== 'loading' && (
-        <Link
-          href="/products"
-          id="product-detail-back"
-          className="inline-flex items-center gap-1.5 text-sm text-gray-500
-                     hover:text-indigo-600 transition mb-6"
-        >
-          <ArrowLeft size={15} />
-          Back to Products
-        </Link>
+        <div className="flex items-center justify-between mb-6">
+          <Link
+            href="/products"
+            id="product-detail-back"
+            className="inline-flex items-center gap-1.5 text-sm text-gray-500
+                       hover:text-indigo-600 transition"
+          >
+            <ArrowLeft size={15} />
+            Back to Products
+          </Link>
+
+          {/* Only show Edit when a product is loaded */}
+          {status === 'success' && product && (
+            <Link
+              href={`/products/${product.id}/edit`}
+              id="product-detail-edit"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm
+                         font-medium border border-gray-300 text-gray-600
+                         hover:bg-gray-50 transition"
+            >
+              <Pencil size={14} />
+              Edit
+            </Link>
+          )}
+        </div>
       )}
 
       {/* ── Loading ─────────────────────────────────────────────────── */}

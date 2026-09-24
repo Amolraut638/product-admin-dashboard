@@ -2,6 +2,7 @@
 
 import { useReducer, useEffect, useState } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { ShoppingBag } from 'lucide-react';
 import { isCancel } from 'axios';
 import type { Product } from '@/types/product';
@@ -28,7 +29,6 @@ import { CardSkeleton } from './ProductSkeleton';
 import Pagination from '@/components/table/Pagination';
 import ErrorBanner from '@/components/ui/ErrorBanner';
 import EmptyState from '@/components/ui/EmptyState';
-import Button from '@/components/ui/Button';
 
 // ---------------------------------------------------------------------------
 // Fetch state — useReducer keeps state transitions atomic.
@@ -357,15 +357,15 @@ export default function ProductsContent() {
             <p className="mt-0.5 text-sm text-gray-500">{subtitle}</p>
           )}
         </div>
-        <Button
+        <Link
+          href="/products/new"
           id="add-product-btn"
-          variant="primary"
-          size="md"
-          disabled
-          className="shrink-0"
+          className="shrink-0 inline-flex items-center gap-1.5 px-5 py-2 rounded-full
+                     text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700
+                     active:bg-indigo-800 transition"
         >
           + Add Product
-        </Button>
+        </Link>
       </div>
 
       {/* Filter bar — search + category + sort */}
