@@ -5,8 +5,9 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { ShoppingBag } from 'lucide-react';
 import { isCancel } from 'axios';
 import type { Product } from '@/types/product';
-import { getProducts, searchProducts } from '@/services/product.service';
+import { getProducts, searchProducts, getCategoryProducts } from '@/services/product.service';
 import { useDebounce } from '@/hooks/useDebounce';
+import { useCategories } from '@/hooks/useCategories';
 import {
   parsePage,
   parseLimit,
@@ -15,9 +16,14 @@ import {
   getResultRange,
 } from '@/lib/pagination';
 import type { PageSize } from '@/lib/pagination';
+import {
+  parseSortField,
+  parseSortOrder,
+} from '@/lib/filters';
+import type { SortField, SortOrder } from '@/lib/filters';
 import ProductsTable from './ProductsTable';
 import ProductCard from './ProductCard';
-import SearchInput from './SearchInput';
+import FilterBar from './FilterBar';
 import { CardSkeleton } from './ProductSkeleton';
 import Pagination from '@/components/table/Pagination';
 import ErrorBanner from '@/components/ui/ErrorBanner';
@@ -25,8 +31,9 @@ import EmptyState from '@/components/ui/EmptyState';
 import Button from '@/components/ui/Button';
 
 // ---------------------------------------------------------------------------
-// Fetch state — useReducer for atomic, lint-safe state transitions.
-// dispatch() from useReducer is NOT flagged by react-hooks/set-state-in-effect.
+// Fetch state — useReducer keeps state transitions atomic.
+// dispatch() is NOT flagged by react-hooks/set-state-in-effect (only useState
+// setters are flagged when called synchronously inside an effect body).
 // ---------------------------------------------------------------------------
 interface FetchState {
   status: 'loading' | 'success' | 'empty' | 'error';
@@ -68,73 +75,108 @@ function fetchReducer(state: FetchState, action: FetchAction): FetchState {
 // ---------------------------------------------------------------------------
 // ProductsContent
 //
-// Must be rendered inside a <Suspense> boundary (see products/page.tsx)
-// because it calls useSearchParams() — a Next.js App Router requirement.
+// Must live inside a <Suspense> boundary (products/page.tsx) because it
+// calls useSearchParams() — a Next.js App Router requirement.
 // ---------------------------------------------------------------------------
 export default function ProductsContent() {
   const router       = useRouter();
   const pathname     = usePathname();
   const searchParams = useSearchParams();
 
-  // ── URL as source of truth ────────────────────────────────────────────────
-  // Page and limit are re-parsed on every render from searchParams.
-  const page      = parsePage(searchParams.get('page'));
-  const limit     = parseLimit(searchParams.get('limit'));
-  // urlSearch is what the API and pagination use — comes from the URL.
-  const urlSearch = searchParams.get('search') ?? '';
+  // ── URL as single source of truth ─────────────────────────────────────
+  const page         = parsePage(searchParams.get('page'));
+  const limit        = parseLimit(searchParams.get('limit'));
+  const urlSearch    = searchParams.get('search')   ?? '';
+  const urlCategory  = searchParams.get('category') ?? '';
+  const urlSort      = parseSortField(searchParams.get('sort'));    // SortField | ''
+  const urlOrder     = parseSortOrder(searchParams.get('order'));   // SortOrder ('asc' default)
 
-  // ── Local input state ─────────────────────────────────────────────────────
-  // inputValue drives the visible text in the search box and is responsive
-  // to every keystroke.  It is initialized once from the URL on mount so that
-  // a direct URL like /products?search=phone pre-fills the input correctly.
+  // ── Local controlled state ─────────────────────────────────────────────
+  // inputValue drives the visible search box — initialised from URL on mount
+  // so that a direct URL like /products?search=phone pre-fills the input.
+  // setInputValue is called only from event handlers (never inside effects).
   const [inputValue, setInputValue] = useState(urlSearch);
 
-  // Debounced copy of inputValue — only settles after 450 ms of no typing.
-  // The setState inside useDebounce runs inside setTimeout (async), so it
-  // is NOT flagged by the react-hooks/set-state-in-effect lint rule.
+  // Debounced copy: only settles 450 ms after the last keystroke.
+  // setState inside useDebounce runs inside setTimeout (async), so the
+  // react-hooks/set-state-in-effect rule is NOT triggered.
   const debouncedSearch = useDebounce(inputValue, 450);
 
-  // retryCount: incremented in event handlers only — never inside useEffect.
+  // retryCount incremented by event handlers only — never inside useEffect.
   const [retryCount, setRetryCount] = useState(0);
 
-  // Fetch state managed by useReducer (dispatch is lint-safe in effects).
+  // Fetch state
   const [fetchState, dispatch] = useReducer(fetchReducer, initialFetchState);
-
-  // Destructure for Effect 3 dependencies (avoids referencing whole object).
   const { status, products, total, errorMessage } = fetchState;
 
-  // ── Effect 1: Normalize invalid page/limit URL params ────────────────────
+  // Categories — loaded once on mount by the useCategories hook.
+  const {
+    categories,
+    loading: categoriesLoading,
+    error:   categoriesError,
+  } = useCategories();
+
+  // ── Effect 1: Normalize invalid URL params ────────────────────────────
   //
-  // Compares raw URL strings against parsed (valid) values.
-  // If they differ, replaces the URL once — no redirect loop because after
-  // the replace, raw === parsed and the guard short-circuits.
+  // Compares raw URL strings to their parsed (valid) representations.
+  // If anything is invalid, replaces the URL ONCE — no loop because after
+  // the replace the raw value === parsed value and the guard short-circuits.
+  //
+  // Handles: page, limit, sort, order.
+  // Category is NOT validated here because validity depends on the category
+  // list (fetched async); an unknown category simply returns empty results.
   useEffect(() => {
     const rawPage  = searchParams.get('page')  ?? '';
     const rawLimit = searchParams.get('limit') ?? '';
-    const normalizedPage  = parsePage(rawPage  || null);
-    const normalizedLimit = parseLimit(rawLimit || null);
+    const rawSort  = searchParams.get('sort')  ?? '';
+    const rawOrder = searchParams.get('order') ?? '';
 
-    if (rawPage !== String(normalizedPage) || rawLimit !== String(normalizedLimit)) {
+    const normPage  = String(parsePage(rawPage   || null));
+    const normLimit = String(parseLimit(rawLimit || null));
+    const normSort  = parseSortField(rawSort || null);  // '' if invalid/absent
+    // order only matters when sort is set
+    const normOrder: SortOrder | '' = normSort ? parseSortOrder(rawOrder || null) : '';
+
+    const needsNorm =
+      rawPage  !== normPage  ||
+      rawLimit !== normLimit ||
+      rawSort  !== normSort  ||                                 // invalid sort removed
+      (normSort !== '' && rawOrder !== normOrder);              // invalid order corrected
+
+    if (needsNorm) {
       const params = new URLSearchParams(searchParams.toString());
-      params.set('page',  String(normalizedPage));
-      params.set('limit', String(normalizedLimit));
+      params.set('page',  normPage);
+      params.set('limit', normLimit);
+      if (normSort) {
+        params.set('sort',  normSort);
+        params.set('order', normOrder);
+      } else {
+        params.delete('sort');
+        params.delete('order');
+      }
       router.replace(`${pathname}?${params.toString()}`);
     }
   }, [searchParams, router, pathname]);
 
-  // ── Effect 2: Sync debounced input → URL ─────────────────────────────────
+  // ── Effect 2: Sync debounced input → URL ─────────────────────────────
   //
-  // Runs after the debounce period has elapsed with no new keystrokes.
-  // Only updates the URL when the debounced value differs from what is
-  // already in the URL — preventing a no-op router.replace on every render.
+  // Runs after the 450 ms debounce period with no new keystrokes.
+  // Only updates the URL when the debounced value differs from the URL.
   //
-  // Crucially, this also resets page to 1 whenever the search query changes,
-  // so the user starts at the first page of new results.
-  //
-  // router.replace is NOT setState — this effect is lint-safe.
+  // Key behaviours:
+  //  • Page is always reset to 1 when search changes.
+  //  • router.replace (not setState) → lint-safe.
   useEffect(() => {
     const trimmed = debouncedSearch.trim();
-    if (trimmed === urlSearch) return; // already in sync — nothing to do
+
+    // Guard: if debouncedSearch hasn't caught up to inputValue yet (e.g. the
+    // input was programmatically cleared by handleClearSearch or
+    // handleCategoryChange but the debounce timer is still pending), do nothing.
+    // Without this guard, a stale debouncedSearch could re-add a deleted search
+    // param to the URL before the debounce timer fires with the empty value.
+    if (trimmed !== inputValue.trim()) return;
+
+    if (trimmed === urlSearch) return; // already in sync — no-op
 
     const params = new URLSearchParams(searchParams.toString());
     if (trimmed) {
@@ -142,54 +184,54 @@ export default function ProductsContent() {
     } else {
       params.delete('search');
     }
-    params.set('page', '1'); // always reset to page 1 on search change
+    params.set('page', '1');
     router.replace(`${pathname}?${params.toString()}`);
-  }, [debouncedSearch, urlSearch, searchParams, router, pathname]);
+  }, [debouncedSearch, inputValue, urlSearch, searchParams, router, pathname]);
 
-  // ── Effect 3: Fetch products ──────────────────────────────────────────────
+  // ── Effect 3: Fetch products ──────────────────────────────────────────
   //
-  // Runs when page, limit, urlSearch, or retryCount changes.
+  // Priority:  search > category > all products
   //
   // STALE-REQUEST PROTECTION — two layers:
-  //  1. AbortController: cancels the in-flight HTTP request via Axios signal.
-  //     When the cleanup function runs (i.e. a new fetch supersedes the old),
-  //     controller.abort() is called.  Axios translates this into a
-  //     CanceledError, which isCancel() detects.
-  //  2. `cancelled` flag: guards against the (unlikely) scenario where the
-  //     then/catch callback fires after React has already cleaned up.
+  //  1. AbortController: controller.abort() is called in the cleanup function
+  //     whenever a new fetch supersedes this one.  Axios translates abort
+  //     into CanceledError; isCancel() detects it and returns early.
+  //  2. `cancelled` boolean: discards results if the component unmounted
+  //     (belt-and-suspenders in case the response arrives after cleanup).
   //
-  // Race-condition scenario:
-  //   Request A (phone) starts → user changes to "laptop" → cleanup runs →
-  //   A is aborted → B starts → B resolves → UI shows laptop results.
-  //   Even if A were to resolve after B, isCancel(err) silences A's
-  //   catch — and the `cancelled` flag in the then callback discards A's data.
+  // Sort params: the URL uses `sort`/`order`; the API uses `sortBy`/`order`.
+  // Translation: { sortBy: urlSort, order: urlOrder } — built only when sort
+  // is selected (urlSort !== '').
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
 
     dispatch({ type: 'FETCH_START' });
 
-    const skip = calcSkip(page, limit);
-    const promise = urlSearch
-      ? searchProducts(urlSearch, { limit, skip }, controller.signal)
-      : getProducts({ limit, skip }, controller.signal);
+    const skip      = calcSkip(page, limit);
+    const sortParams = urlSort ? { sortBy: urlSort, order: urlOrder } : {};
+
+    let promise;
+    if (urlSearch) {
+      // Phase 5 — search endpoint (DummyJSON also supports sortBy/order here)
+      promise = searchProducts(urlSearch, { limit, skip, ...sortParams }, controller.signal);
+    } else if (urlCategory) {
+      // Phase 6 — category endpoint
+      promise = getCategoryProducts(urlCategory, { limit, skip, ...sortParams }, controller.signal);
+    } else {
+      // Default — all products
+      promise = getProducts({ limit, skip, ...sortParams }, controller.signal);
+    }
 
     promise
       .then((data) => {
         if (!cancelled) {
-          dispatch({
-            type: 'FETCH_SUCCESS',
-            products: data.products,
-            total: data.total,
-          });
+          dispatch({ type: 'FETCH_SUCCESS', products: data.products, total: data.total });
         }
       })
       .catch((err: unknown) => {
-        // isCancel() returns true when Axios aborts due to AbortController.
-        // This is intentional control flow — do NOT show an error banner.
+        // AbortController cancellation — intentional, never show an error.
         if (isCancel(err)) return;
-
-        // Any other error (network failure, API error) is a real problem.
         if (!cancelled) {
           dispatch({
             type: 'FETCH_ERROR',
@@ -200,20 +242,18 @@ export default function ProductsContent() {
 
     return () => {
       cancelled = true;
-      controller.abort(); // Cancel the in-flight request
+      controller.abort();
     };
-  }, [page, limit, urlSearch, retryCount]);
+  }, [page, limit, urlSearch, urlCategory, urlSort, urlOrder, retryCount]);
 
-  // ── Effect 4: Correct page > totalPages after data arrives ───────────────
+  // ── Effect 4: Correct page > totalPages after data arrives ───────────
   //
-  // Example: /products?page=999&limit=20&search=phone
-  // The search may return fewer total results than the requested page implies.
-  // After the fetch resolves, if page > totalPages, redirect to the last page.
-  // Guard: only fires when status is success/empty AND page is truly > total —
-  // avoids redirect loops (once corrected, page <= totalPages and it stops).
+  // Example: ?page=999&limit=20&category=beauty — beauty may have only 5 pages.
+  // After the fetch resolves, redirect to the last valid page.
+  // Guard: stops once page <= totalPages — no redirect loop.
   useEffect(() => {
     if (status !== 'success' && status !== 'empty') return;
-    if (total === 0) return; // genuinely empty — no redirect needed
+    if (total === 0) return;
 
     const totalPages = calcTotalPages(total, limit);
     if (page > totalPages) {
@@ -223,11 +263,11 @@ export default function ProductsContent() {
     }
   }, [status, total, page, limit, router, pathname, searchParams]);
 
-  // ── Navigation helpers ────────────────────────────────────────────────────
+  // ── Navigation helpers ────────────────────────────────────────────────
   //
-  // Uses URLSearchParams(searchParams.toString()) so that ALL existing params
-  // (search, and future: category, sort, order) are preserved automatically.
-  // Only page and limit are modified.
+  // Always build on top of the full existing searchParams string so that
+  // all active params (search, category, sort, order) are preserved when
+  // only page or limit is changing.
 
   function buildParams(newPage: number, newLimit: PageSize): string {
     const params = new URLSearchParams(searchParams.toString());
@@ -244,18 +284,48 @@ export default function ProductsContent() {
     router.replace(`${pathname}?${buildParams(1, newLimit)}`);
   }
 
-  // ── Clear search ──────────────────────────────────────────────────────────
-  // Called from SearchInput's X button — an event handler, never in an effect.
-  // setInputValue here is lint-safe (event handler, not inside useEffect).
+  // ── Clear search ──────────────────────────────────────────────────────
+  // Event handler → setInputValue is lint-safe here.
   function handleClearSearch() {
-    setInputValue(''); // clear the visible input immediately
+    setInputValue('');
     const params = new URLSearchParams(searchParams.toString());
     params.delete('search');
     params.set('page', '1');
     router.replace(`${pathname}?${params.toString()}`);
   }
 
-  // ── Derived values ────────────────────────────────────────────────────────
+  // ── Category change ───────────────────────────────────────────────────
+  // Selecting a category clears search (DummyJSON has no combined endpoint).
+  // setInputValue is called from an event handler → lint-safe.
+  function handleCategoryChange(newCategory: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (newCategory) {
+      params.set('category', newCategory);
+    } else {
+      params.delete('category');
+    }
+    params.delete('search'); // mutually exclusive with search
+    params.set('page', '1');
+    router.replace(`${pathname}?${params.toString()}`);
+    setInputValue(''); // clear visible input immediately
+  }
+
+  // ── Sort change ───────────────────────────────────────────────────────
+  // Preserves category/search; resets page to 1.
+  function handleSortChange(newSort: SortField | '', newOrder: SortOrder) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (newSort) {
+      params.set('sort',  newSort);
+      params.set('order', newOrder);
+    } else {
+      params.delete('sort');
+      params.delete('order');
+    }
+    params.set('page', '1');
+    router.replace(`${pathname}?${params.toString()}`);
+  }
+
+  // ── Derived values ────────────────────────────────────────────────────
   const totalPages = calcTotalPages(total, limit);
 
   const subtitle = status === 'success' ? getResultRange(page, limit, total) : '';
@@ -269,7 +339,14 @@ export default function ProductsContent() {
     onPageSizeChange: handlePageSizeChange,
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Empty-state message ───────────────────────────────────────────────
+  function emptyMessage(): string {
+    if (urlSearch)    return `No products found for "${urlSearch}".`;
+    if (urlCategory)  return `No products found in this category.`;
+    return 'No products found.';
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────
   return (
     <div>
       {/* Page heading */}
@@ -291,14 +368,21 @@ export default function ProductsContent() {
         </Button>
       </div>
 
-      {/* Filter bar — search input (category, sort will be added in later phases) */}
-      <div className="mb-4 flex items-center gap-3">
-        <SearchInput
-          value={inputValue}
-          onChange={setInputValue}
-          onClear={handleClearSearch}
-        />
-      </div>
+      {/* Filter bar — search + category + sort */}
+      <FilterBar
+        searchValue={inputValue}
+        onSearchChange={setInputValue}
+        onSearchClear={handleClearSearch}
+        categories={categories}
+        categoriesLoading={categoriesLoading}
+        categoriesError={categoriesError}
+        selectedCategory={urlCategory}
+        onCategoryChange={handleCategoryChange}
+        selectedSort={urlSort}
+        selectedOrder={urlOrder}
+        onSortChange={handleSortChange}
+        isSearchActive={urlSearch !== ''}
+      />
 
       {/* Error banner */}
       {status === 'error' && (
@@ -311,7 +395,7 @@ export default function ProductsContent() {
         </div>
       )}
 
-      {/* ── Loading ─────────────────────────────────────────────────────── */}
+      {/* ── Loading ─────────────────────────────────────────────────── */}
       {status === 'loading' && (
         <>
           <div className="hidden md:block bg-white border border-gray-200 rounded-2xl overflow-hidden">
@@ -323,36 +407,41 @@ export default function ProductsContent() {
         </>
       )}
 
-      {/* ── Empty ───────────────────────────────────────────────────────── */}
+      {/* ── Empty ───────────────────────────────────────────────────── */}
       {status === 'empty' && (
         <div className="bg-white border border-gray-200 rounded-2xl">
-          <EmptyState
-            icon={ShoppingBag}
-            message={
-              urlSearch
-                ? `No products found for "${urlSearch}".`
-                : 'No products found.'
-            }
-          />
-          {urlSearch && (
-            <div className="pb-6 text-center">
-              <button
-                type="button"
-                id="products-clear-search-btn"
-                onClick={handleClearSearch}
-                className="text-sm text-indigo-600 hover:underline"
-              >
-                Clear search
-              </button>
+          <EmptyState icon={ShoppingBag} message={emptyMessage()} />
+          {(urlSearch || urlCategory) && (
+            <div className="pb-6 text-center space-x-4">
+              {urlSearch && (
+                <button
+                  type="button"
+                  id="products-clear-search-btn"
+                  onClick={handleClearSearch}
+                  className="text-sm text-indigo-600 hover:underline"
+                >
+                  Clear search
+                </button>
+              )}
+              {urlCategory && (
+                <button
+                  type="button"
+                  id="products-clear-category-btn"
+                  onClick={() => handleCategoryChange('')}
+                  className="text-sm text-indigo-600 hover:underline"
+                >
+                  Show all categories
+                </button>
+              )}
             </div>
           )}
         </div>
       )}
 
-      {/* ── Success ─────────────────────────────────────────────────────── */}
+      {/* ── Success ─────────────────────────────────────────────────── */}
       {status === 'success' && (
         <>
-          {/* Desktop: table + pagination in one card */}
+          {/* Desktop */}
           <div className="hidden md:block bg-white border border-gray-200 rounded-2xl overflow-hidden">
             <ProductsTable products={products} />
             <div className="border-t border-gray-100">
@@ -360,7 +449,7 @@ export default function ProductsContent() {
             </div>
           </div>
 
-          {/* Mobile: stacked cards + pagination card */}
+          {/* Mobile */}
           <div className="md:hidden">
             <div className="space-y-3">
               {products.map((product) => (
