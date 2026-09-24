@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Star, ImageOff } from 'lucide-react';
+import { Star, ImageOff, Pencil, Trash2 } from 'lucide-react';
 import type { Product } from '@/types/product';
 import Badge from '@/components/ui/Badge';
 import StockBadge from './StockBadge';
@@ -33,10 +33,16 @@ function ProductImage({ src, alt }: { src: string; alt: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// ProductRow — single table row; title is a Link to the details page.
-// The whole row has a group-hover so the bg shifts when hovered.
+// ProductRow — single table row; title links to the details page.
+// Accepts an onDelete callback so the row can request deletion without
+// owning state — state lives in ProductsContent.
 // ---------------------------------------------------------------------------
-function ProductRow({ product }: { product: Product }) {
+interface ProductRowProps {
+  product:  Product;
+  onDelete: (product: Product) => void;
+}
+
+function ProductRow({ product, onDelete }: ProductRowProps) {
   return (
     <tr className="hover:bg-gray-50 transition-colors group">
       {/* Product: thumbnail + clickable title */}
@@ -78,6 +84,34 @@ function ProductRow({ product }: { product: Product }) {
       <td className="px-4 py-3">
         <StockBadge stock={product.stock} />
       </td>
+
+      {/* Actions — Edit link + Delete button */}
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/products/${product.id}/edit`}
+            id={`table-edit-${product.id}`}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs
+                       font-medium bg-gray-100 text-gray-700
+                       hover:bg-indigo-50 hover:text-indigo-700 transition"
+          >
+            <Pencil size={11} />
+            Edit
+          </Link>
+
+          <button
+            type="button"
+            id={`table-delete-${product.id}`}
+            onClick={() => onDelete(product)}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs
+                       font-medium bg-red-50 text-red-600
+                       hover:bg-red-100 hover:text-red-700 transition"
+          >
+            <Trash2 size={11} />
+            Delete
+          </button>
+        </div>
+      </td>
     </tr>
   );
 }
@@ -86,7 +120,7 @@ function ProductRow({ product }: { product: Product }) {
 // TableHead
 // ---------------------------------------------------------------------------
 function TableHead() {
-  const cols = ['Product', 'Category', 'Price', 'Rating', 'Stock'];
+  const cols = ['Product', 'Category', 'Price', 'Rating', 'Stock', 'Actions'];
   return (
     <thead>
       <tr className="bg-gray-50 border-b border-gray-100">
@@ -109,11 +143,17 @@ function TableHead() {
 // Does NOT include a Card wrapper — parent wraps it together with Pagination.
 // ---------------------------------------------------------------------------
 interface ProductsTableProps {
-  products: Product[];
-  loading?: boolean;
+  products:  Product[];
+  loading?:  boolean;
+  /** Called when the user clicks Delete for a product. */
+  onDelete?: (product: Product) => void;
 }
 
-export default function ProductsTable({ products, loading = false }: ProductsTableProps) {
+export default function ProductsTable({
+  products,
+  loading   = false,
+  onDelete,
+}: ProductsTableProps) {
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full divide-y divide-gray-100">
@@ -123,7 +163,11 @@ export default function ProductsTable({ products, loading = false }: ProductsTab
             <TableSkeleton rows={8} />
           ) : (
             products.map((product) => (
-              <ProductRow key={product.id} product={product} />
+              <ProductRow
+                key={product.id}
+                product={product}
+                onDelete={onDelete ?? (() => {})}
+              />
             ))
           )}
         </tbody>

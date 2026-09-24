@@ -6,7 +6,8 @@ import Link from 'next/link';
 import { ShoppingBag } from 'lucide-react';
 import { isCancel } from 'axios';
 import type { Product } from '@/types/product';
-import { getProducts, searchProducts, getCategoryProducts } from '@/services/product.service';
+import { getProducts, searchProducts, getCategoryProducts, deleteProduct } from '@/services/product.service';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useCategories } from '@/hooks/useCategories';
 import {
@@ -45,7 +46,8 @@ interface FetchState {
 type FetchAction =
   | { type: 'FETCH_START' }
   | { type: 'FETCH_SUCCESS'; products: Product[]; total: number }
-  | { type: 'FETCH_ERROR'; message: string };
+  | { type: 'FETCH_ERROR'; message: string }
+  | { type: 'DELETE_PRODUCT'; id: number };
 
 const initialFetchState: FetchState = {
   status: 'loading',
@@ -67,6 +69,16 @@ function fetchReducer(state: FetchState, action: FetchAction): FetchState {
       };
     case 'FETCH_ERROR':
       return { status: 'error', products: [], total: 0, errorMessage: action.message };
+    case 'DELETE_PRODUCT': {
+      const filtered = state.products.filter((p) => p.id !== action.id);
+      const newTotal = Math.max(0, state.total - 1);
+      return {
+        ...state,
+        products: filtered,
+        total:    newTotal,
+        status:   filtered.length === 0 ? 'empty' : 'success',
+      };
+    }
     default:
       return state;
   }
@@ -108,6 +120,14 @@ export default function ProductsContent() {
   // Fetch state
   const [fetchState, dispatch] = useReducer(fetchReducer, initialFetchState);
   const { status, products, total, errorMessage } = fetchState;
+
+  // ── Delete state ──────────────────────────────────────────────────────
+  // pendingDelete: the product the user clicked Delete on (null = dialog closed)
+  // deletingId:    id currently being deleted (null = no deletion in-flight)
+  // deleteError:   message shown inside the dialog when the DELETE request fails
+  const [pendingDelete, setPendingDelete] = useState<Product | null>(null);
+  const [deletingId,    setDeletingId]    = useState<number | null>(null);
+  const [deleteError,   setDeleteError]   = useState<string | null>(null);
 
   // Categories — loaded once on mount by the useCategories hook.
   const {
@@ -325,7 +345,56 @@ export default function ProductsContent() {
     router.replace(`${pathname}?${params.toString()}`);
   }
 
+  // ── Delete handlers ───────────────────────────────────────────────────
+
+  // Open the confirmation dialog for a product.
+  function handleDeleteRequest(product: Product) {
+    setPendingDelete(product);
+    setDeleteError(null);
+  }
+
+  // Cancel: close the dialog (blocked while a deletion is in-flight).
+  function handleDeleteCancel() {
+    if (deletingId !== null) return;
+    setPendingDelete(null);
+    setDeleteError(null);
+  }
+
+  // Confirm: call the API, update local state on success.
+  // All setState calls are inside an async event handler — lint-safe.
+  async function handleDeleteConfirm() {
+    if (!pendingDelete || deletingId !== null) return; // prevent duplicates
+
+    const id           = pendingDelete.id;
+    // Capture product count before the async gap for empty-page navigation.
+    const isLastOnPage = products.length === 1;
+
+    setDeletingId(id);
+    setDeleteError(null);
+
+    try {
+      await deleteProduct(id);
+
+      // Remove from client-side list. Do NOT refetch — DummyJSON doesn't persist
+      // deletions so a refetch would show the product again.
+      dispatch({ type: 'DELETE_PRODUCT', id });
+      setPendingDelete(null);
+      setDeletingId(null);
+
+      // If the page is now empty and there is a previous page, go back one page.
+      if (isLastOnPage && page > 1) {
+        const params = new URLSearchParams(searchParams.toString());
+        params.set('page', String(page - 1));
+        router.replace(`${pathname}?${params.toString()}`);
+      }
+    } catch {
+      setDeleteError('Failed to delete the product. Please try again.');
+      setDeletingId(null);
+    }
+  }
+
   // ── Derived values ────────────────────────────────────────────────────
+
   const totalPages = calcTotalPages(total, limit);
 
   const subtitle = status === 'success' ? getResultRange(page, limit, total) : '';
@@ -443,7 +512,7 @@ export default function ProductsContent() {
         <>
           {/* Desktop */}
           <div className="hidden md:block bg-white border border-gray-200 rounded-2xl overflow-hidden">
-            <ProductsTable products={products} />
+            <ProductsTable products={products} onDelete={handleDeleteRequest} />
             <div className="border-t border-gray-100">
               <Pagination {...paginationProps} />
             </div>
@@ -453,7 +522,11 @@ export default function ProductsContent() {
           <div className="md:hidden">
             <div className="space-y-3">
               {products.map((product) => (
-                <ProductCard key={product.id} product={product} />
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  onDelete={handleDeleteRequest}
+                />
               ))}
             </div>
             <div className="mt-4 bg-white border border-gray-200 rounded-2xl overflow-hidden">
@@ -462,6 +535,22 @@ export default function ProductsContent() {
           </div>
         </>
       )}
+
+      {/* ── Delete confirmation dialog ──────────────────────────────── */}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete Product?"
+        description={
+          pendingDelete
+            ? `Are you sure you want to delete "${pendingDelete.title}"? This action cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete"
+        loading={deletingId !== null}
+        error={deleteError}
+        onCancel={handleDeleteCancel}
+        onConfirm={handleDeleteConfirm}
+      />
     </div>
   );
 }

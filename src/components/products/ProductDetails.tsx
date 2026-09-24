@@ -1,11 +1,13 @@
 'use client';
 
 import { useReducer, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Star, Package, RefreshCw, Pencil } from 'lucide-react';
+import { ArrowLeft, Star, Package, RefreshCw, Pencil, Trash2 } from 'lucide-react';
 import { isCancel, isAxiosError } from 'axios';
 import type { Product } from '@/types/product';
-import { getProductById } from '@/services/product.service';
+import { getProductById, deleteProduct } from '@/services/product.service';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import ProductImageGallery from './ProductImageGallery';
 import ProductReviews from './ProductReviews';
 import Badge from '@/components/ui/Badge';
@@ -156,7 +158,27 @@ export default function ProductDetails({ id }: ProductDetailsProps) {
   // retryCount: incremented in the Retry button handler (event handler, not effect).
   const [retryCount, setRetryCount] = useState(0);
 
+  // ── Delete state ───────────────────────────────────────────────────
+  const router = useRouter();
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting,        setIsDeleting]        = useState(false);
+  const [deleteError,       setDeleteError]       = useState<string | null>(null);
+
   const { status, product, errorMessage } = state;
+
+  // ── Delete handler ───────────────────────────────────────────────
+  async function handleDeleteConfirm() {
+    if (!product || isDeleting) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteProduct(product.id);
+      router.push('/products');
+    } catch {
+      setDeleteError('Failed to delete the product. Please try again.');
+      setIsDeleting(false);
+    }
+  }
 
   // ── Fetch effect ───────────────────────────────────────────────────────
   //
@@ -195,7 +217,7 @@ export default function ProductDetails({ id }: ProductDetailsProps) {
   // ── Render ────────────────────────────────────────────────────────────
 
   return (
-    <div>
+    <>
       {/* Top nav — back link + edit button */}
       {status !== 'loading' && (
         <div className="flex items-center justify-between mb-6">
@@ -209,18 +231,32 @@ export default function ProductDetails({ id }: ProductDetailsProps) {
             Back to Products
           </Link>
 
-          {/* Only show Edit when a product is loaded */}
+          {/* Only show Edit + Delete when a product is loaded */}
           {status === 'success' && product && (
-            <Link
-              href={`/products/${product.id}/edit`}
-              id="product-detail-edit"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm
-                         font-medium border border-gray-300 text-gray-600
-                         hover:bg-gray-50 transition"
-            >
-              <Pencil size={14} />
-              Edit
-            </Link>
+            <div className="flex items-center gap-2">
+              <Link
+                href={`/products/${product.id}/edit`}
+                id="product-detail-edit"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm
+                           font-medium border border-gray-300 text-gray-600
+                           hover:bg-gray-50 transition"
+              >
+                <Pencil size={14} />
+                Edit
+              </Link>
+
+              <button
+                type="button"
+                id="product-detail-delete"
+                onClick={() => { setShowDeleteConfirm(true); setDeleteError(null); }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm
+                           font-medium border border-red-200 text-red-600
+                           hover:bg-red-50 transition"
+              >
+                <Trash2 size={14} />
+                Delete
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -301,6 +337,22 @@ export default function ProductDetails({ id }: ProductDetailsProps) {
           <ProductReviews reviews={product.reviews ?? []} />
         </>
       )}
-    </div>
+
+    {/* ── Delete confirmation dialog ──────────────────────────────── */}
+    <ConfirmDialog
+      open={showDeleteConfirm}
+      title="Delete Product?"
+      description={
+        product
+          ? `Are you sure you want to delete "${product.title}"? This action cannot be undone.`
+          : ''
+      }
+      confirmLabel="Delete"
+      loading={isDeleting}
+      error={deleteError}
+      onCancel={() => { if (!isDeleting) { setShowDeleteConfirm(false); setDeleteError(null); } }}
+      onConfirm={handleDeleteConfirm}
+    />
+  </>
   );
 }
