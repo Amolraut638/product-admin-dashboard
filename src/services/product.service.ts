@@ -1,17 +1,30 @@
-// Phase 1: file established — full implementation in Phase 2
+// Phase 1: file established — full implementation in Phase 2+
 import apiClient from '@/lib/axios';
 import type { Product, ProductFormData, ProductsQuery, ProductsResponse } from '@/types/product';
 
 // GET /products  (with optional search, category, sort, pagination)
-export async function getProducts(query: ProductsQuery = {}): Promise<ProductsResponse> {
-  const response = await apiClient.get<ProductsResponse>('/products', { params: query });
+export async function getProducts(
+  query: ProductsQuery = {},
+  signal?: AbortSignal,
+): Promise<ProductsResponse> {
+  const response = await apiClient.get<ProductsResponse>('/products', {
+    params: query,
+    signal,
+  });
   return response.data;
 }
 
 // GET /products/search?q=…
-export async function searchProducts(q: string, query: Omit<ProductsQuery, 'q'> = {}): Promise<ProductsResponse> {
+// Accepts an AbortSignal so the caller can cancel in-flight requests when
+// a newer search supersedes the previous one (stale-request protection).
+export async function searchProducts(
+  q: string,
+  query: Omit<ProductsQuery, 'q'> = {},
+  signal?: AbortSignal,
+): Promise<ProductsResponse> {
   const response = await apiClient.get<ProductsResponse>('/products/search', {
     params: { q, ...query },
+    signal,
   });
   return response.data;
 }
@@ -22,7 +35,7 @@ export async function getProductById(id: number): Promise<Product> {
   return response.data;
 }
 
-// GET /products/categories
+// GET /products/category-list
 export async function getCategories(): Promise<string[]> {
   const response = await apiClient.get<string[]>('/products/category-list');
   return response.data;
